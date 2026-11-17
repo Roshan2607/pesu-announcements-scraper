@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { PesuAuthSession } from './pesuAuthSession.js';
 import { ocrService } from './ocrService.js';
 import { classifyAnnouncement } from './classifier.js';
+import { defaultSourceVerifier, SourceVerifier } from './sourceVerifier.js';
 import {
   ClassifiedHackathon,
   QuackathonAnnouncementEnvelope,
@@ -13,6 +14,8 @@ export interface ScraperOptions {
   enableOcr?: boolean;
   maxAnnouncements?: number;
   htmlFixture?: string; // For testing or offline fixture execution
+  verifyPublicSources?: boolean; // Default true: runs sourceVerifier to fetch and verify candidate pages
+  sourceVerifier?: SourceVerifier; // Custom or mock verifier instance
 }
 
 export class AnnouncementScraper {
@@ -214,7 +217,8 @@ export class AnnouncementScraper {
   }
 
   /**
-   * High-level method that returns both the Quackathon envelope and classified events
+   * High-level method that returns both the Quackathon envelope and classified events.
+   * Runs active public page verification by default.
    */
   async getEventsPipeline(options: ScraperOptions = {}): Promise<{
     envelope: QuackathonAnnouncementEnvelope;
@@ -223,6 +227,14 @@ export class AnnouncementScraper {
   }> {
     const envelope = await this.fetchEnvelope(options);
     const allClassified = envelope.data.map(classifyAnnouncement);
+
+    // Run active public source verification unless explicitly disabled
+    if (options.verifyPublicSources !== false) {
+      const verifier = options.sourceVerifier || defaultSourceVerifier;
+      const hackathonCandidates = allClassified.filter((e) => e.isHackathon);
+      await verifier.verifyAll(hackathonCandidates);
+    }
+
     const hackathons = allClassified.filter((e) => e.isHackathon);
 
     return {

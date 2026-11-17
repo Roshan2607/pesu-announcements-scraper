@@ -125,17 +125,43 @@ export class OcrService {
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
     try {
-      const resp = await fetch(url, {
-        signal: controller.signal,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          Accept: 'image/png,image/jpeg,image/webp,*/*',
-        },
-      });
-      clearTimeout(timeout);
+      let currentUrl = url;
+      let redirectHops = 0;
+      const maxRedirects = 3;
+      let resp: Response | null = null;
 
-      if (!resp.ok) {
-        console.warn(`[OcrService] Poster fetch returned HTTP ${resp.status}`);
+      while (redirectHops <= maxRedirects) {
+        resp = await fetch(currentUrl, {
+          signal: controller.signal,
+          redirect: 'manual',
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            Accept: 'image/png,image/jpeg,image/webp,*/*',
+          },
+        });
+
+        // Validate redirects and ensure target remains within allowed domains
+        if ([301, 302, 303, 307, 308].includes(resp.status)) {
+          redirectHops++;
+          const location = resp.headers.get('location');
+          if (!location) {
+            console.warn(`[OcrService] Redirect response missing location header for: ${currentUrl}`);
+            return null;
+          }
+          const nextUrl = new URL(location, currentUrl).toString();
+          if (!this.isUrlAllowed(nextUrl)) {
+            console.warn(`[OcrService] Blocked redirect to unapproved URL: ${nextUrl}`);
+            return null;
+          }
+          currentUrl = nextUrl;
+          continue;
+        }
+
+        break;
+      }
+
+      if (!resp || !resp.ok) {
+        console.warn(`[OcrService] Poster fetch returned HTTP ${resp?.status || 'no-response'}`);
         return null;
       }
 
@@ -145,13 +171,30 @@ export class OcrService {
         return null;
       }
 
-      const arrayBuf = await resp.arrayBuffer();
-      const buf = Buffer.from(arrayBuf);
-
-      if (buf.length > MAX_IMAGE_SIZE_BYTES) {
-        console.warn(`[OcrService] Downloaded image exceeds limit (${buf.length} bytes)`);
+      if (!resp.body) {
         return null;
       }
+
+      // Stream chunks while enforcing 5MB limit incrementally
+      const reader = resp.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let bytesRead = 0;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) {
+          bytesRead += value.length;
+          if (bytesRead > MAX_IMAGE_SIZE_BYTES) {
+            console.warn(`[OcrService] Download stream exceeded 5MB limit (${bytesRead} bytes); aborted.`);
+            await reader.cancel('Max image size exceeded');
+            return null;
+          }
+          chunks.push(value);
+        }
+      }
+
+      const buf = Buffer.concat(chunks);
 
       if (!this.isValidImageBuffer(buf)) {
         console.warn('[OcrService] Downloaded response is not a valid image format (magic bytes check failed)');
@@ -160,9 +203,11 @@ export class OcrService {
 
       return buf;
     } catch (err: any) {
-      clearTimeout(timeout);
       console.warn(`[OcrService] Failed to download poster safely: ${err.message}`);
       return null;
+    } finally {
+      // Keep timeout armed through entire download stream; clear only on completion or failure
+      clearTimeout(timeout);
     }
   }
 

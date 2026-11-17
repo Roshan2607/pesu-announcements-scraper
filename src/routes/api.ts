@@ -116,6 +116,16 @@ export function createApiRouter(scheduler: CronScheduler): Router {
       return;
     }
 
+    // Apply the same independent verification protection as listing endpoint
+    const { include_unverified } = req.query;
+    if (include_unverified !== 'true' && !found.verification.isIndependentlyVerified) {
+      res.status(404).json({
+        ok: false,
+        error: `Hackathon with id '${req.params.id}' not found or pending independent verification`,
+      });
+      return;
+    }
+
     res.json({
       ok: true,
       hackathon: found,

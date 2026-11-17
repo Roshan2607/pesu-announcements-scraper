@@ -68,7 +68,35 @@ const MONTH_MAP: Record<string, string> = {
 };
 
 /**
+ * Validates whether a given year, month, and day form a legitimate calendar date
+ * (e.g. rejects February 31, November 31, leap-year anomalies).
+ */
+export function isValidCalendarDate(year: number, month: number, day: number): boolean {
+  if (isNaN(year) || isNaN(month) || isNaN(day)) return false;
+  if (month < 1 || month > 12) return false;
+  if (day < 1 || day > 31) return false;
+
+  const d = new Date(Date.UTC(year, month - 1, day));
+  return (
+    d.getUTCFullYear() === year &&
+    d.getUTCMonth() === month - 1 &&
+    d.getUTCDate() === day
+  );
+}
+
+export function formatValidIsoDate(year: number, month: number, day: number): string | null {
+  if (!isValidCalendarDate(year, month, day)) {
+    return null;
+  }
+  const yStr = String(year);
+  const mStr = String(month).padStart(2, '0');
+  const dStr = String(day).padStart(2, '0');
+  return `${yStr}-${mStr}-${dStr}`;
+}
+
+/**
  * Parses free-form date expressions into validated ISO 8601 (YYYY-MM-DD) date strings.
+ * Verifies real calendar validity before returning any date string.
  */
 export function parseIsoDateRange(text: string, referenceYear = new Date().getFullYear()): {
   start: string | null;
@@ -78,24 +106,34 @@ export function parseIsoDateRange(text: string, referenceYear = new Date().getFu
 
   const isoMatch = text.match(/\b(202\d)-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])\b/);
   if (isoMatch) {
-    return { start: isoMatch[0], end: isoMatch[0] };
+    const y = parseInt(isoMatch[1], 10);
+    const m = parseInt(isoMatch[2], 10);
+    const d = parseInt(isoMatch[3], 10);
+    const validIso = formatValidIsoDate(y, m, d);
+    if (validIso) {
+      return { start: validIso, end: validIso };
+    }
   }
 
   const rangeMatch = text.match(
     /\b([0-9]{1,2})(?:st|nd|rd|th)?\s*(?:-|to)\s*([0-9]{1,2})(?:st|nd|rd|th)?\s+([a-zA-Z]+)(?:\s+(202\d))?\b/i
   );
   if (rangeMatch) {
-    const startDay = rangeMatch[1].padStart(2, '0');
-    const endDay = rangeMatch[2].padStart(2, '0');
+    const startDay = parseInt(rangeMatch[1], 10);
+    const endDay = parseInt(rangeMatch[2], 10);
     const monthStr = rangeMatch[3].toLowerCase();
-    const month = MONTH_MAP[monthStr];
-    const year = rangeMatch[4] || String(referenceYear);
+    const monthNum = parseInt(MONTH_MAP[monthStr] || '0', 10);
+    const year = parseInt(rangeMatch[4] || String(referenceYear), 10);
 
-    if (month) {
-      return {
-        start: `${year}-${month}-${startDay}`,
-        end: `${year}-${month}-${endDay}`,
-      };
+    if (monthNum > 0) {
+      const validStart = formatValidIsoDate(year, monthNum, startDay);
+      const validEnd = formatValidIsoDate(year, monthNum, endDay);
+      if (validStart && validEnd) {
+        return {
+          start: validStart,
+          end: validEnd,
+        };
+      }
     }
   }
 
@@ -103,17 +141,19 @@ export function parseIsoDateRange(text: string, referenceYear = new Date().getFu
     /\b([0-9]{1,2})(?:st|nd|rd|th)?[\s-]+([a-zA-Z]+)(?:[\s-]+(202\d))?\b/i
   );
   if (singleMatch) {
-    const day = singleMatch[1].padStart(2, '0');
+    const day = parseInt(singleMatch[1], 10);
     const monthStr = singleMatch[2].toLowerCase();
-    const month = MONTH_MAP[monthStr];
-    const year = singleMatch[3] || String(referenceYear);
+    const monthNum = parseInt(MONTH_MAP[monthStr] || '0', 10);
+    const year = parseInt(singleMatch[3] || String(referenceYear), 10);
 
-    if (month) {
-      const isoDate = `${year}-${month}-${day}`;
-      return {
-        start: isoDate,
-        end: isoDate,
-      };
+    if (monthNum > 0) {
+      const validDate = formatValidIsoDate(year, monthNum, day);
+      if (validDate) {
+        return {
+          start: validDate,
+          end: validDate,
+        };
+      }
     }
   }
 
@@ -167,13 +207,24 @@ export function extractEligibility(combinedText: string): EligibilityInfo {
     ? parseIsoDateRange(deadlineMatch[1].trim()).start
     : null;
 
-  // 6. Registration Status
+  // 6. Registration Status (Stays UNKNOWN unless explicitly stated or bounded by deadline)
   let status: 'REGISTRATION_OPEN' | 'REGISTRATION_CLOSED' | 'UNKNOWN' = 'UNKNOWN';
-  if (registrationDeadline) {
+  const isExplicitClosed = /\b(registration\s+closed|registrations\s+are\s+closed|applications\s+closed|forms\s+closed|submission\s+closed)\b/i.test(
+    combinedText
+  );
+  const isExplicitOpen = /\b(registration\s+open|registrations\s+are\s+open|register\s+now|open\s+for\s+registrations?|applications\s+open|forms\s+open)\b/i.test(
+    combinedText
+  );
+
+  if (isExplicitClosed) {
+    status = 'REGISTRATION_CLOSED';
+  } else if (registrationDeadline) {
     const todayIso = new Date().toISOString().slice(0, 10);
     status = registrationDeadline < todayIso ? 'REGISTRATION_CLOSED' : 'REGISTRATION_OPEN';
-  } else {
+  } else if (isExplicitOpen) {
     status = 'REGISTRATION_OPEN';
+  } else {
+    status = 'UNKNOWN';
   }
 
   return {
@@ -187,7 +238,8 @@ export function extractEligibility(combinedText: string): EligibilityInfo {
 }
 
 /**
- * Validates independent public proof for the event (SSRF/Confidentiality defense).
+ * Validates candidate public proof for the event (SSRF/Confidentiality defense).
+ * Returns publicProofUrl as candidate; live network verification confirms page before marking verified.
  */
 export function extractVerification(combinedText: string): VerificationInfo {
   let matchedPublicUrl: string | null = null;
@@ -216,13 +268,15 @@ export function extractVerification(combinedText: string): VerificationInfo {
     }
   }
 
-  const isIndependentlyVerified = Boolean(matchedPublicUrl);
-
   return {
-    isIndependentlyVerified,
+    isIndependentlyVerified: false,
     verificationSource,
-    publicProofUrl: matchedPublicUrl,
-    requiresAdminReview: !isIndependentlyVerified,
+    publicProofUrl: null,
+    candidateProofUrl: matchedPublicUrl,
+    verificationStatus: matchedPublicUrl ? 'PENDING_VERIFICATION' : 'UNVERIFIED',
+    verifiedAt: null,
+    verificationFailureReason: null,
+    requiresAdminReview: true,
   };
 }
 
@@ -272,9 +326,9 @@ export function classifyAnnouncement(ann: RawPesuAnnouncement): ClassifiedHackat
     }
   }
 
-  // 4. Independent Verification & Proof URL
+  // 4. Independent Verification Candidate & Proof URL
   const verification = extractVerification(combinedText);
-  const registrationUrl = verification.publicProofUrl;
+  const registrationUrl = verification.publicProofUrl || verification.candidateProofUrl;
 
   // 5. Cash Prize Extraction
   const prizeRegex =
@@ -326,6 +380,12 @@ export function classifyAnnouncement(ann: RawPesuAnnouncement): ClassifiedHackat
   const eligibility = extractEligibility(combinedText);
 
   // 8. Matchability Determination for Quackathon Team Matching
+  // Requirements:
+  // 1. Must be a confirmed team-eligible event (teamSize !== null && teamSize.max > 1).
+  //    Unknown team eligibility means isMatchable = false until verified.
+  // 2. Registration status must not be closed.
+  // 3. Must be independently verified before team matching.
+  const isConfirmedTeamEvent = Boolean(teamSize && teamSize.max > 1);
   let isHackathon = isPotentialHackathon;
   let isMatchable = false;
 
@@ -334,10 +394,17 @@ export function classifyAnnouncement(ann: RawPesuAnnouncement): ClassifiedHackat
     isMatchable = false;
     classificationReason = 'Solo-only contest; excluded from team hackathon matching';
   } else if (isPotentialHackathon) {
-    // Event is matchable only if registration is not closed and it's a team-eligible competition
-    if (eligibility.status === 'REGISTRATION_CLOSED') {
+    if (!isConfirmedTeamEvent) {
       isMatchable = false;
-      classificationReason = 'Registration deadline has passed; not matchable';
+      classificationReason = teamSize === null
+        ? `${classificationReason} (Team eligibility unconfirmed; excluded from team matching until verified)`
+        : `${classificationReason} (Solo event; excluded from team matching)`;
+    } else if (eligibility.status === 'REGISTRATION_CLOSED') {
+      isMatchable = false;
+      classificationReason = 'Registration deadline has passed or registration is closed; not matchable';
+    } else if (!verification.isIndependentlyVerified) {
+      isMatchable = false;
+      classificationReason = `${classificationReason} (Pending independent public source verification)`;
     } else {
       isMatchable = true;
     }

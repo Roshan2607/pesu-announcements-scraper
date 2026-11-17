@@ -37,10 +37,22 @@ export interface EligibilityInfo {
 }
 
 export interface VerificationInfo {
-  /** True only if event has an external/public URL proof confirming it is not a confidential circular */
+  /** True only after external public page has been fetched, verified accessible, and confirmed relevant */
   isIndependentlyVerified: boolean;
   verificationSource: 'PUBLIC_PLATFORM' | 'OFFICIAL_DOMAIN' | 'UNVERIFIED_PORTAL_ONLY';
+  /** Final confirmed public URL (null until actively verified) */
   publicProofUrl: string | null;
+  /** Candidate URL found in announcement text before network verification */
+  candidateProofUrl: string | null;
+  /** Verification lifecycle state */
+  verificationStatus:
+    | 'VERIFIED'
+    | 'PENDING_VERIFICATION'
+    | 'FAILED_ACCESSIBILITY'
+    | 'FAILED_RELEVANCE'
+    | 'UNVERIFIED';
+  verifiedAt: string | null;
+  verificationFailureReason: string | null;
   requiresAdminReview: boolean;
 }
 

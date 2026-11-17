@@ -17,24 +17,24 @@
 
 ### 3. Attack Prevention & OCR Sandboxing (SSRF & Resource Limits)
 - Poster images passed to Tesseract OCR are strictly validated:
-  - **Origin Allowlist**: Only HTTPS URLs from `www.pesuacademy.com`, `pesuacademy.com`, and `files.pesuacademy.com` are accepted. Internal IPs, AWS metadata endpoints (`169.254.169.254`), and untrusted external domains are blocked.
+  - **Origin Allowlist & Validated Redirects**: Only HTTPS URLs from `www.pesuacademy.com`, `pesuacademy.com`, and `files.pesuacademy.com` are accepted. Redirects are handled manually with destination URLs re-validated at each hop.
+  - **Streaming Size Enforcement**: Enforces the 5 MB limit chunk-by-chunk during streaming to prevent large payloads from filling RAM.
+  - **Active Download Timeout**: The download timeout remains armed throughout the entire body stream, clearing only upon completion or abort.
   - **Magic Bytes Validation**: Image buffers are inspected to verify genuine image headers (PNG, JPEG, WebP, GIF) before execution.
   - **Concurrency & Serialization**: OCR tasks run sequentially through an execution queue, preventing CPU/memory exhaustion.
   - **Idle Auto-Termination**: Tesseract WebAssembly workers automatically terminate after 45 seconds of idle inactivity to reclaim memory.
-  - **Payload Limits**: Max 5 MB image size limit enforced before and during streaming.
-  - **Timeouts**: 6-second network download timeout and 12-second OCR execution timeout prevent worker stalls.
 - **Sync Fixture Protection**: Custom `htmlFixture` payloads are rejected with HTTP 403 unless explicitly running under `NODE_ENV=test`.
 
 ### 4. Cache Protection & Collision-Resistant IDs
 - **Collision-Resistant Hashing**: Computes deterministic SHA-256 hashes incorporating title, date, and content snippet: `pesu_ann_${sha256(title + '|' + date + '|' + snippet).slice(0, 16)}`. Two notices with the same title on the same date will never collide or overwrite each other.
 - **Healthy Cache Preservation**: If a sync run unexpectedly yields 0 announcements (e.g. temporary network anomaly or layout update), the scheduler refuses to overwrite the existing healthy cache.
 
-### 5. Strict Classifier & Validated ISO Dates
-- **No Fabricated Constraints**: If team size or venue is not explicitly stated in the notice or flyer OCR, `teamSize` and `venue` strictly remain `null`. The service never assumes default team sizes (e.g. 2–4). Exact team sizes (e.g. "team of 4") are preserved strictly as `{ min: 4, max: 4 }`.
-- **Solo Event Filtering**: Events designated strictly for individual participation are excluded from Quackathon's matchable hackathon pool.
-- **Eligibility Verification**: Extracts campus restrictions (`RR`, `EC`, `ALL`), departments, target study years, and registration open/closed status.
-- **Independent Public Source Verification**: Cross-references against trusted public platforms (Devfolio, Unstop, Luma, HackerEarth, Google Forms) or official university event subdomains (`events.pes.edu`). Items lacking public proof require admin review and are withheld from Quackathon by default.
-- **Validated ISO Dates**: Converts date expressions (e.g. `28th - 29th November 2026`) into standardized ISO 8601 strings (`YYYY-MM-DD`). Never confuses the announcement publication date with an event's start date.
+### 5. Strict Classifier, Calendar Validity & Active Public-Source Verification
+- **Active Public-Source Verification**: Candidate public links (Devfolio, Unstop, Google Forms, Luma, HackerEarth, `events.pes.edu`) are captured as `candidateProofUrl`. An active `SourceVerifier` fetches the landing page with SSRF safeguards, confirms it is accessible, and verifies distinctive title/organizer keywords before marking `isIndependentlyVerified = true`.
+- **Zero Presumed Registration**: Unstated registration deadlines remain `status: 'UNKNOWN'`, never defaulting to `REGISTRATION_OPEN`.
+- **Confirmed Team Eligibility for Matchability**: Unknown team size (`teamSize: null`) or solo events keep `isMatchable = false`. "Find Teammates" eligibility is strictly gated to confirmed team competitions (`teamSize.max > 1`) that are independently verified.
+- **Real Calendar Validity**: Free-form and ISO dates are checked for real calendar validity (rejecting invalid dates like February 31 or November 31).
+- **Direct ID Access Gating**: `GET /api/v1/hackathons/:id` applies the exact same verification filter as listing, returning 404 for unverified items unless `include_unverified=true` is authorized.
 
 ---
 
@@ -51,13 +51,14 @@ pesu-announcements-scraper/
 │   └── services/
 │       ├── pesuAuthSession.ts       # Portal session handshake & cookie jar
 │       ├── announcementScraper.ts   # HTML parser & collision-resistant ID generator
-│       ├── ocrService.ts            # SSRF-protected Tesseract OCR engine
+│       ├── ocrService.ts            # SSRF-protected streaming Tesseract OCR engine
 │       ├── classifier.ts            # Strict classifier, ISO date & eligibility parser
+│       ├── sourceVerifier.ts        # Active public landing page & relevance verifier
 │       └── cronScheduler.ts         # In-memory cache, deduplication & recurring job
 ├── tests/
 │   ├── fixtures/
 │   │   └── sampleAnnouncements.ts   # Edge-case test fixtures
-│   ├── verify.test.ts               # Unit & security test suite (45 assertions)
+│   ├── verify.test.ts               # Unit & security test suite (52 assertions)
 │   └── live-fetch.test.ts           # Real-time portal authentication & live-fetch test
 ├── package.json
 └── tsconfig.json
