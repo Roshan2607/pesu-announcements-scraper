@@ -9,6 +9,8 @@ export function createApiRouter(scheduler: CronScheduler): Router {
   // 1. Health & Status (Public diagnostic endpoint)
   router.get('/health', (req, res) => {
     res.json({
+      service: 'PAASHA',
+      name: 'PESU Academy Announcements Scraper & Hackathon API',
       status: 'UP',
       timestamp: new Date().toISOString(),
       sync: scheduler.getStatus(),

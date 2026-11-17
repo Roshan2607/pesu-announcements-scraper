@@ -23,10 +23,12 @@ if (process.env.DISABLE_CRON !== 'true') {
 
 const server = app.listen(port, () => {
   console.log(`\n======================================================`);
-  console.log(`🚀 PESU Academy Announcements & Hackathon API running`);
+  console.log(`🚀 PAASHA: PESU Academy Announcements Scraper & Hackathon API`);
   console.log(`📡 URL: http://localhost:${port}`);
   console.log(`📋 Announcements Endpoint: http://localhost:${port}/api/v1/announcements`);
   console.log(`🏆 Hackathons Endpoint:    http://localhost:${port}/api/v1/hackathons`);
+  console.log(`🦆 Quackathon Feed:        http://localhost:${port}/api/v1/quackathon/events`);
+  console.log(`💓 Connection Status:      http://localhost:${port}/api/v1/connection-status`);
   console.log(`🔄 Sync Endpoint:          POST http://localhost:${port}/api/v1/sync`);
   console.log(`⏰ Background Cron:        ${cronSchedule}`);
   console.log(`======================================================\n`);

@@ -4,7 +4,7 @@ import { AnnouncementScraper } from '../src/services/announcementScraper.js';
 
 async function runLiveVerification() {
   console.log('====================================================');
-  console.log('🌐 LIVE PESU ACADEMY INTEGRATION & FETCH TEST');
+  console.log('🌐 PAASHA LIVE PESU ACADEMY INTEGRATION & FETCH TEST');
   console.log('====================================================\n');
 
   const srn = process.env.PESU_SRN;

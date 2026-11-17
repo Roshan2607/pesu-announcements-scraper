@@ -1,6 +1,7 @@
-# PESU Academy Announcements Scraper & Hackathon Ingestion Service
+# PAASHA 🦆
+### **P**ESU **A**cademy **A**nnouncements **S**craper & **H**ackathon **A**PI
 
-A hardened, automated event scraper and classification service built specifically for **[Quackathon](https://github.com/Roshan2607/Quackathon)**.
+**PAASHA** is a hardened, automated event scraper, flyer OCR processor, and hackathon ingestion service built specifically for **[Quackathon](https://github.com/Roshan2607/Quackathon)**.
 
 ---
 

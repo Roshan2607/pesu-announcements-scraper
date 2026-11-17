@@ -1,7 +1,7 @@
 {
-  "name": "pesu-announcements-scraper",
+  "name": "paasha",
   "version": "1.0.0",
-  "description": "PESU Academy Announcements Scraper with Tesseract OCR and Quackathon Ingestion API",
+  "description": "PAASHA: PESU Academy Announcements Scraper & Hackathon API with Tesseract OCR for Quackathon",
   "main": "dist/index.js",
   "type": "module",
   "scripts": {

@@ -9,7 +9,8 @@ import { ocrService } from '../src/services/ocrService.js';
 
 async function runTests() {
   console.log('====================================================');
-  console.log('🧪 RUNNING HARDENED PESU SCRAPER VERIFICATION');
+  console.log('🧪 RUNNING HARDENED PAASHA VERIFICATION');
+  console.log('   (PESU Academy Announcements Scraper & Hackathon API)');
   console.log('====================================================\n');
 
   let passed = 0;
