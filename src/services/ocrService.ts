@@ -1,4 +1,4 @@
-import { createWorker } from 'tesseract.js';
+import { createWorker, Worker } from 'tesseract.js';
 
 const ALLOWED_IMAGE_DOMAINS = [
   'www.pesuacademy.com',
@@ -11,12 +11,29 @@ const ALLOWED_IMAGE_DOMAINS = [
 const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
 const OCR_TIMEOUT_MS = 12000; // 12 seconds max for OCR recognition
 const FETCH_TIMEOUT_MS = 6000; // 6 seconds max for image download
+const WORKER_IDLE_TIMEOUT_MS = 45000; // 45 seconds auto-termination for memory release
 
 export class OcrService {
-  private worker: any = null;
+  private worker: Worker | null = null;
   private isInitializing = false;
+  private idleTimer: NodeJS.Timeout | null = null;
+  private queue: Promise<any> = Promise.resolve(); // Simple FIFO queue for concurrency throttling
 
-  async getWorker() {
+  /**
+   * Resets the idle timer. Worker auto-terminates after 45s of inactivity.
+   */
+  private touchIdleTimer() {
+    if (this.idleTimer) {
+      clearTimeout(this.idleTimer);
+    }
+    this.idleTimer = setTimeout(() => {
+      this.terminate().catch(() => {});
+    }, WORKER_IDLE_TIMEOUT_MS);
+  }
+
+  async getWorker(): Promise<Worker | null> {
+    this.touchIdleTimer();
+
     if (this.worker) return this.worker;
     if (this.isInitializing) {
       while (this.isInitializing) {
@@ -27,12 +44,13 @@ export class OcrService {
 
     try {
       this.isInitializing = true;
-      this.worker = await createWorker('eng');
+      const worker = await createWorker('eng');
+      this.worker = worker;
       this.isInitializing = false;
       return this.worker;
-    } catch (err) {
+    } catch (err: any) {
       this.isInitializing = false;
-      console.warn('[OcrService] Worker initialization error:', err);
+      console.warn('[OcrService] Worker initialization error:', err.message || err);
       return null;
     }
   }
@@ -57,6 +75,27 @@ export class OcrService {
   }
 
   /**
+   * Validates magic bytes to ensure payload is genuinely an image (PNG, JPEG, WEBP, GIF).
+   * Prevents HTML error pages or arbitrary text/binaries from reaching Tesseract.
+   */
+  public isValidImageBuffer(buf: Buffer): boolean {
+    if (!buf || buf.length < 12) return false;
+
+    // PNG: 89 50 4E 47
+    const isPng = buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47;
+    // JPEG: FF D8 FF
+    const isJpeg = buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
+    // WEBP: RIFF ... WEBP
+    const isWebp =
+      buf.subarray(0, 4).toString('ascii') === 'RIFF' &&
+      buf.subarray(8, 12).toString('ascii') === 'WEBP';
+    // GIF: GIF87a or GIF89a
+    const isGif = buf.subarray(0, 3).toString('ascii') === 'GIF';
+
+    return isPng || isJpeg || isWebp || isGif;
+  }
+
+  /**
    * Safely downloads an image with strict domain whitelisting, size limits, and timeouts.
    */
   private async safeFetchImageBuffer(url: string): Promise<Buffer | null> {
@@ -66,11 +105,17 @@ export class OcrService {
     }
 
     if (url.startsWith('data:image/')) {
-      const base64Data = url.split(',')[1];
-      if (!base64Data) return null;
+      const commaIndex = url.indexOf(',');
+      if (commaIndex === -1) return null;
+      const base64Data = url.slice(commaIndex + 1);
       const buf = Buffer.from(base64Data, 'base64');
+
       if (buf.length > MAX_IMAGE_SIZE_BYTES) {
         console.warn(`[OcrService] Inline image exceeds max size limit (${buf.length} bytes)`);
+        return null;
+      }
+      if (!this.isValidImageBuffer(buf)) {
+        console.warn('[OcrService] Inline image has invalid image magic bytes');
         return null;
       }
       return buf;
@@ -84,6 +129,7 @@ export class OcrService {
         signal: controller.signal,
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          Accept: 'image/png,image/jpeg,image/webp,*/*',
         },
       });
       clearTimeout(timeout);
@@ -107,6 +153,11 @@ export class OcrService {
         return null;
       }
 
+      if (!this.isValidImageBuffer(buf)) {
+        console.warn('[OcrService] Downloaded response is not a valid image format (magic bytes check failed)');
+        return null;
+      }
+
       return buf;
     } catch (err: any) {
       clearTimeout(timeout);
@@ -116,47 +167,63 @@ export class OcrService {
   }
 
   /**
-   * Run OCR on a validated image with strict timeouts and resource limits.
+   * Run OCR on a validated image with serialization queue, strict timeouts and resource limits.
    */
   async extractText(imageInput: string | Buffer): Promise<string> {
     if (!imageInput) return '';
 
-    try {
-      let imageBuffer: Buffer | string | null = null;
+    // Enqueue OCR request so jobs run sequentially without pinning CPU/memory
+    const executeJob = async (): Promise<string> => {
+      try {
+        let imageBuffer: Buffer | null = null;
 
-      if (typeof imageInput === 'string') {
-        imageBuffer = await this.safeFetchImageBuffer(imageInput);
-        if (!imageBuffer) {
+        if (typeof imageInput === 'string') {
+          imageBuffer = await this.safeFetchImageBuffer(imageInput);
+          if (!imageBuffer) {
+            return '';
+          }
+        } else {
+          if (imageInput.length > MAX_IMAGE_SIZE_BYTES) {
+            console.warn('[OcrService] Image buffer exceeds size limit');
+            return '';
+          }
+          if (!this.isValidImageBuffer(imageInput)) {
+            console.warn('[OcrService] Image buffer failed magic bytes validation');
+            return '';
+          }
+          imageBuffer = imageInput;
+        }
+
+        const worker = await this.getWorker();
+        if (!worker) {
           return '';
         }
-      } else {
-        if (imageInput.length > MAX_IMAGE_SIZE_BYTES) {
-          console.warn('[OcrService] Image buffer exceeds size limit');
-          return '';
-        }
-        imageBuffer = imageInput;
-      }
 
-      const worker = await this.getWorker();
-      if (!worker) {
+        // Enforce recognition timeout
+        const recognitionPromise = worker.recognize(imageBuffer);
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Tesseract OCR execution timed out')), OCR_TIMEOUT_MS)
+        );
+
+        const result: any = await Promise.race([recognitionPromise, timeoutPromise]);
+        this.touchIdleTimer();
+        return (result?.data?.text || '').trim();
+      } catch (error: any) {
+        console.warn('[OcrService] OCR recognition error:', error.message || error);
         return '';
       }
+    };
 
-      // Enforce recognition timeout
-      const recognitionPromise = worker.recognize(imageBuffer);
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Tesseract OCR execution timed out')), OCR_TIMEOUT_MS)
-      );
-
-      const result: any = await Promise.race([recognitionPromise, timeoutPromise]);
-      return (result?.data?.text || '').trim();
-    } catch (error: any) {
-      console.warn('[OcrService] OCR recognition error:', error.message || error);
-      return '';
-    }
+    // Serialize execution
+    this.queue = this.queue.then(executeJob, executeJob);
+    return this.queue;
   }
 
   async terminate() {
+    if (this.idleTimer) {
+      clearTimeout(this.idleTimer);
+      this.idleTimer = null;
+    }
     if (this.worker) {
       try {
         await this.worker.terminate();

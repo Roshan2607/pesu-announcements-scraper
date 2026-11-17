@@ -104,7 +104,7 @@ export class CronScheduler {
         success: false,
         announcementsCount: this.cachedEnvelope?.data.length || 0,
         hackathonsCount: this.cachedHackathons.length,
-        error: this.lastError,
+        error: this.lastError || undefined,
       };
     }
   }

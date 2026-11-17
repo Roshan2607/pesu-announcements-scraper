@@ -71,6 +71,11 @@ async function runTests() {
       hackfest.teamSize?.min === 2 && hackfest.teamSize?.max === 4,
       `Explicit team size range 2-4 preserved`
     );
+    assert(hackfest.eligibility.campus === 'RR', 'HackFest eligibility campus detected as RR');
+    assert(hackfest.eligibility.departments.includes('CSE'), 'HackFest departments include CSE');
+    assert(hackfest.verification.isIndependentlyVerified === true, 'HackFest independently verified via Devfolio');
+    assert(hackfest.verification.verificationSource === 'PUBLIC_PLATFORM', 'HackFest verification source is PUBLIC_PLATFORM');
+    assert(hackfest.isMatchable === true, 'HackFest marked as matchable');
   }
 
   // Check Ideathon (Single ISO date parsing)
@@ -106,6 +111,32 @@ async function runTests() {
   assert(
     Boolean(guestTalk && !guestTalk.isHackathon),
     'Guest talk on "How Systems Get Hacked" is NOT classified as a hackathon'
+  );
+
+  // Check Unverified Internal Hackathon without external link proof
+  const unverifiedAnns = await scraper.parseAnnouncementsHtml(
+    `<div class="elem-info-wrapper">
+      <div class="text-info">Internal Closed Hackathon for College Fest</div>
+      <div class="text-muted text-date pull-right">12-November-2026</div>
+      <div class="col-md-12">
+        <p>A closed hackathon for college fest. No external registration link.</p>
+      </div>
+    </div>`
+  );
+  const unverifiedAnn = unverifiedAnns[0];
+  const { classifyAnnouncement } = await import('../src/services/classifier.js');
+  const classifiedUnverified = classifyAnnouncement(unverifiedAnn);
+  assert(
+    classifiedUnverified.isHackathon === true,
+    'Internal hackathon recognized as hackathon'
+  );
+  assert(
+    classifiedUnverified.verification.isIndependentlyVerified === false,
+    'Internal hackathon flagged as NOT independently verified (Requires Admin Review)'
+  );
+  assert(
+    classifiedUnverified.verification.requiresAdminReview === true,
+    'Internal hackathon correctly sets requiresAdminReview: true'
   );
 
   // --- TEST SUITE 3: OCR SSRF Protection & Domain Whitelist ---
@@ -200,6 +231,23 @@ async function runTests() {
     const qJson = await qResp.json();
     assert(qJson.resource === 'announcements', 'Resource is "announcements"');
     assert(qJson.data.length === 3, 'Quackathon events endpoint contains only verified hackathons');
+
+    // Filter params test: matchable_only=true
+    const matchResp = await fetch(`http://localhost:${authPort}/api/v1/hackathons?matchable_only=true`, {
+      headers: { Authorization: `Bearer ${testSecretKey}` },
+    });
+    assert(matchResp.status === 200, 'GET /api/v1/hackathons?matchable_only=true returns 200 OK');
+    const matchJson = await matchResp.json();
+    assert(matchJson.total === 3, 'All 3 items match matchable criteria');
+
+    // Connection status check
+    const connResp = await fetch(`http://localhost:${authPort}/api/v1/connection-status`, {
+      headers: { Authorization: `Bearer ${testSecretKey}` },
+    });
+    // Since PESU_SRN is either unset or set in environment, response is valid JSON with ok field
+    assert([200, 502, 503].includes(connResp.status), `GET /api/v1/connection-status returns expected HTTP status (${connResp.status})`);
+    const connJson = await connResp.json();
+    assert(typeof connJson.ok === 'boolean', 'Connection status response contains boolean "ok" property');
 
     // Test 4.3: Cache protection (Zero-item sync does not overwrite healthy cache)
     console.log('\n--- 5. Testing Cache Protection ---');

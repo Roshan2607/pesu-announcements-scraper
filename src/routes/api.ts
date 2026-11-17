@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { CronScheduler } from '../services/cronScheduler.js';
 import { requireApiAuth } from '../middleware/auth.js';
+import { PesuAuthSession } from '../services/pesuAuthSession.js';
 
 export function createApiRouter(scheduler: CronScheduler): Router {
   const router = Router();
@@ -17,7 +18,47 @@ export function createApiRouter(scheduler: CronScheduler): Router {
   // Apply authentication middleware to all data and trigger endpoints
   router.use('/api', requireApiAuth);
 
-  // 2. Safe Hackathons & Competitions Endpoint (Primary for Quackathon matching)
+  // 2. Live Connection Verification Endpoint
+  // Performs a direct health ping against PESU Academy to confirm live connection status
+  router.get('/api/v1/connection-status', async (req, res) => {
+    const srn = process.env.PESU_SRN;
+    const pwd = process.env.PESU_PASSWORD;
+
+    if (!srn || !pwd || srn === 'PES1UG22CS000') {
+      res.status(503).json({
+        ok: false,
+        portalLive: false,
+        message: 'PESU Academy credentials not configured in environment secrets.',
+      });
+      return;
+    }
+
+    const testSession = new PesuAuthSession(srn, pwd);
+    const start = Date.now();
+    const loginResult = await testSession.login();
+    const latencyMs = Date.now() - start;
+
+    if (loginResult.success) {
+      res.json({
+        ok: true,
+        portalLive: true,
+        sessionActive: true,
+        latencyMs,
+        checkedAt: new Date().toISOString(),
+        syncStatus: scheduler.getStatus(),
+      });
+    } else {
+      res.status(502).json({
+        ok: false,
+        portalLive: false,
+        sessionActive: false,
+        latencyMs,
+        error: 'Failed to establish active session with PESU Academy.',
+      });
+    }
+  });
+
+  // 3. Safe Hackathons & Competitions Endpoint (Primary for Quackathon matching)
   // Exposes ONLY verified, non-personal hackathon & competition metadata
   router.get('/api/v1/hackathons', async (req, res) => {
     let hackathons = scheduler.getCachedHackathons();
@@ -27,9 +68,20 @@ export function createApiRouter(scheduler: CronScheduler): Router {
       hackathons = scheduler.getCachedHackathons();
     }
 
-    const { category, format } = req.query;
+    const { category, format, matchable_only, include_unverified } = req.query;
 
     let filtered = hackathons;
+
+    // Independent Source Verification Filter:
+    // By default, only expose independently verified events unless explicitly requesting unverified review items
+    if (include_unverified !== 'true') {
+      filtered = filtered.filter((h) => h.verification.isIndependentlyVerified);
+    }
+
+    if (matchable_only === 'true') {
+      filtered = filtered.filter((h) => h.isMatchable);
+    }
+
     if (category) {
       filtered = filtered.filter(
         (h) => h.category.toLowerCase() === String(category).toLowerCase()
@@ -49,7 +101,7 @@ export function createApiRouter(scheduler: CronScheduler): Router {
     });
   });
 
-  // 3. Single Hackathon Details
+  // 4. Single Hackathon Details
   router.get('/api/v1/hackathons/:id', (req, res) => {
     const hackathons = scheduler.getCachedHackathons();
     const found = hackathons.find((h) => h.id === req.params.id);
@@ -68,7 +120,7 @@ export function createApiRouter(scheduler: CronScheduler): Router {
     });
   });
 
-  // 4. Quackathon Normalized Envelope (Restricted to Hackathons & Competitions only)
+  // 5. Quackathon Normalized Envelope (Restricted to verified matchable hackathons only)
   router.get('/api/v1/quackathon/events', async (req, res) => {
     let hackathons = scheduler.getCachedHackathons();
 
@@ -77,8 +129,12 @@ export function createApiRouter(scheduler: CronScheduler): Router {
       hackathons = scheduler.getCachedHackathons();
     }
 
-    // Convert classified hackathons into Quackathon's envelope format
-    const quackathonData = hackathons.map((h) => ({
+    // Filter to independently verified hackathons for safe public team matching
+    const verifiedHackathons = hackathons.filter(
+      (h) => h.verification.isIndependentlyVerified && h.isMatchable
+    );
+
+    const quackathonData = verifiedHackathons.map((h) => ({
       id: h.id,
       title: h.title,
       date: h.publishedDate || '',
@@ -95,9 +151,8 @@ export function createApiRouter(scheduler: CronScheduler): Router {
     });
   });
 
-  // 5. Raw Announcement Feed (Restricted: requires EXPOSE_RAW_ANNOUNCEMENTS=true)
+  // 6. Raw Announcement Feed (Restricted: requires EXPOSE_RAW_ANNOUNCEMENTS=true)
   router.get('/api/v1/announcements', async (req, res) => {
-    // Architectural protection: Raw student circulars shouldn't be exposed by default
     if (process.env.EXPOSE_RAW_ANNOUNCEMENTS !== 'true' && process.env.NODE_ENV !== 'test') {
       res.status(403).json({
         ok: false,
@@ -124,7 +179,7 @@ export function createApiRouter(scheduler: CronScheduler): Router {
     res.json(envelope);
   });
 
-  // 6. Trigger Immediate Sync (Cron hook or Manual Webhook)
+  // 7. Trigger Immediate Sync (Cron hook or Manual Webhook)
   router.post('/api/v1/sync', async (req, res) => {
     const enableOcr = req.query.ocr !== 'false';
 
