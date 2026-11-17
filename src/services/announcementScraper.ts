@@ -1,4 +1,5 @@
 import * as cheerio from 'cheerio';
+import crypto from 'crypto';
 import { PesuAuthSession } from './pesuAuthSession.js';
 import { ocrService } from './ocrService.js';
 import { classifyAnnouncement } from './classifier.js';
@@ -20,6 +21,20 @@ export class AnnouncementScraper {
 
   constructor(session?: PesuAuthSession) {
     this.session = session || new PesuAuthSession();
+  }
+
+  /**
+   * Generates a stable, deterministic announcement ID based on content hash.
+   * Ensures idempotency across repeated scraper runs and service restarts.
+   */
+  public generateStableId(title: string, date: string, rawElementId?: string | null): string {
+    if (rawElementId && rawElementId.trim()) {
+      return `pesu_ann_${rawElementId.trim().replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+    }
+
+    const normalizedKey = `${title.toLowerCase().trim()}|${date.toLowerCase().trim()}`;
+    const hash = crypto.createHash('sha256').update(normalizedKey).digest('hex').substring(0, 16);
+    return `pesu_ann_${hash}`;
   }
 
   /**
@@ -75,8 +90,17 @@ export class AnnouncementScraper {
         posterUrl = `https://www.pesuacademy.com${posterUrl}`;
       }
 
-      // 5. Extract Attachment count
-      const attachments = box.find('.pesu-ico-download, a[href*="download"]').length;
+      // 5. Extract Attachment count & check for existing IDs
+      const downloadLinks = box.find('.pesu-ico-download, a[href*="download"]');
+      const attachments = downloadLinks.length;
+      let rawId: string | null = box.attr('id') || null;
+      if (!rawId && downloadLinks.length > 0) {
+        const href = downloadLinks.first().attr('href') || '';
+        const matchId = href.match(/\/(\d+)(?:\.[a-zA-Z0-9]+)?$/);
+        if (matchId) {
+          rawId = matchId[1];
+        }
+      }
 
       // 6. Run Tesseract OCR on Poster Flyer if present & enabled
       let ocrText = '';
@@ -92,8 +116,11 @@ export class AnnouncementScraper {
         }
       }
 
+      // Deterministic, stable ID
+      const stableId = this.generateStableId(title, date, rawId);
+
       announcements.push({
-        id: `pesu_ann_${Date.now()}_${idx + 1}`,
+        id: stableId,
         title,
         date,
         description: bodyText,

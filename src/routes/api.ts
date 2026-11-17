@@ -1,10 +1,11 @@
 import { Router } from 'express';
 import { CronScheduler } from '../services/cronScheduler.js';
+import { requireApiAuth } from '../middleware/auth.js';
 
 export function createApiRouter(scheduler: CronScheduler): Router {
   const router = Router();
 
-  // 1. Health & Status
+  // 1. Health & Status (Public diagnostic endpoint)
   router.get('/health', (req, res) => {
     res.json({
       status: 'UP',
@@ -12,6 +13,9 @@ export function createApiRouter(scheduler: CronScheduler): Router {
       sync: scheduler.getStatus(),
     });
   });
+
+  // Apply authentication middleware to all data and trigger endpoints
+  router.use('/api', requireApiAuth);
 
   // 2. Raw Envelope for Quackathon's normalizePesuAnnouncementPayload()
   router.get('/api/v1/announcements', async (req, res) => {
@@ -42,7 +46,7 @@ export function createApiRouter(scheduler: CronScheduler): Router {
       hackathons = scheduler.getCachedHackathons();
     }
 
-    const { category, format, min_prize } = req.query;
+    const { category, format } = req.query;
 
     let filtered = hackathons;
     if (category) {

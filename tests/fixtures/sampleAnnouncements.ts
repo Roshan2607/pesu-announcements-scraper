@@ -3,7 +3,7 @@ export const samplePesuAnnouncementsHtml = `
 <html>
 <head><title>PESU Academy Announcements</title></head>
 <body>
-  <!-- 1. Hackathon Announcement -->
+  <!-- 1. Real Hackathon Announcement with explicit team size -->
   <div class="elem-info-wrapper">
     <div class="text-info">HackerSpace HackFest 2026: 24-Hour National Hackathon</div>
     <div class="text-muted text-date pull-right">14-November-2026</div>
@@ -20,7 +20,7 @@ export const samplePesuAnnouncementsHtml = `
     <img class="img-responsive" src="https://via.placeholder.com/600x400.png?text=HackerSpace+HackFest+2026+Prize+100K" alt="HackFest Poster" />
   </div>
 
-  <!-- 2. Ideathon Announcement -->
+  <!-- 2. Real Ideathon Announcement (Explicit team size 2-3) -->
   <div class="elem-info-wrapper">
     <div class="text-info">ACM PESU AI Ideathon: Innovate for Campus</div>
     <div class="text-muted text-date pull-right">10-November-2026</div>
@@ -34,7 +34,7 @@ export const samplePesuAnnouncementsHtml = `
     <img class="img-responsive" src="https://via.placeholder.com/600x400.png?text=ACM+Ideathon" alt="ACM Poster" />
   </div>
 
-  <!-- 3. CTF Contest -->
+  <!-- 3. CTF Contest WITHOUT specified team size (MUST REMAIN null, NOT defaulted to 2-4) -->
   <div class="elem-info-wrapper">
     <div class="text-info">PESU Annual Capture The Flag (CTF) 2026</div>
     <div class="text-muted text-date pull-right">08-November-2026</div>
@@ -45,7 +45,17 @@ export const samplePesuAnnouncementsHtml = `
     </div>
   </div>
 
-  <!-- 4. General Circular (Non-Hackathon) -->
+  <!-- 4. Non-Hackathon Containing the word 'hack' (Should NOT be classified as a hackathon) -->
+  <div class="elem-info-wrapper">
+    <div class="text-info">Guest Lecture on Cybersecurity: How Systems Get Hacked</div>
+    <div class="text-muted text-date pull-right">06-November-2026</div>
+    <div class="col-md-12">
+      <p>Join us for a talk by an industry expert discussing common network vulnerabilities and how servers get hacked.</p>
+      <p>Venue: MRD Auditorium, 3:00 PM.</p>
+    </div>
+  </div>
+
+  <!-- 5. General Routine Circular (Non-Hackathon) -->
   <div class="elem-info-wrapper">
     <div class="text-info">Notice: End Semester Examination Timetable and Hall Allocation</div>
     <div class="text-muted text-date pull-right">05-November-2026</div>

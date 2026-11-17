@@ -7,6 +7,7 @@ export type EventCategory =
   | 'GENERAL_ANNOUNCEMENT';
 
 export interface RawPesuAnnouncement {
+  /** Stable, deterministic identifier generated from content hash or upstream ID */
   id: string;
   title: string;
   date: string;
@@ -31,7 +32,7 @@ export interface ClassifiedHackathon {
   title: string;
   category: EventCategory;
   isHackathon: boolean;
-  organizer: string;
+  organizer: string | null;
   publishedDate: string | null;
   eventDates: {
     start: string | null;
@@ -40,6 +41,7 @@ export interface ClassifiedHackathon {
   registrationDeadline: string | null;
   registrationUrl: string | null;
   cashPrize: string | null;
+  /** Explicit team size ONLY if stated in text/poster. NEVER fabricated. */
   teamSize: {
     min: number;
     max: number;
@@ -52,4 +54,5 @@ export interface ClassifiedHackathon {
   description: string;
   tags: string[];
   confidence: 'high' | 'medium' | 'low';
+  classificationReason: string;
 }
