@@ -24,29 +24,60 @@ export class AnnouncementScraper {
   }
 
   /**
-   * Generates a stable, deterministic announcement ID based on content hash.
-   * Ensures idempotency across repeated scraper runs and service restarts.
+   * Generates a stable, collision-resistant deterministic ID.
+   * Includes title, date, body content snippet, and optional upstream IDs
+   * so two announcements with identical titles on the same date do not collide.
    */
-  public generateStableId(title: string, date: string, rawElementId?: string | null): string {
+  public generateStableId(
+    title: string,
+    date: string,
+    description = '',
+    rawElementId?: string | null
+  ): string {
     if (rawElementId && rawElementId.trim()) {
       return `pesu_ann_${rawElementId.trim().replace(/[^a-zA-Z0-9_-]/g, '_')}`;
     }
 
-    const normalizedKey = `${title.toLowerCase().trim()}|${date.toLowerCase().trim()}`;
+    const cleanTitle = title.toLowerCase().trim();
+    const cleanDate = date.toLowerCase().trim();
+    const contentSnippet = (description || '').trim().replace(/\s+/g, ' ').slice(0, 100).toLowerCase();
+
+    const normalizedKey = `${cleanTitle}|${cleanDate}|${contentSnippet}`;
     const hash = crypto.createHash('sha256').update(normalizedKey).digest('hex').substring(0, 16);
     return `pesu_ann_${hash}`;
   }
 
   /**
-   * Parse HTML content into RawPesuAnnouncement objects
+   * Parse HTML content into RawPesuAnnouncement objects with strict layout validation.
    */
   async parseAnnouncementsHtml(
     html: string,
     options: ScraperOptions = {}
   ): Promise<RawPesuAnnouncement[]> {
+    if (!html || html.trim().length < 50) {
+      throw new Error('Received malformed or empty HTML response from PESU Academy.');
+    }
+
+    // Detect session expirations or redirects
+    const lowerHtml = html.toLowerCase();
+    if (
+      lowerHtml.includes('j_spring_security_check') ||
+      lowerHtml.includes('session expired') ||
+      lowerHtml.includes('login-form')
+    ) {
+      throw new Error('PESU Academy session expired or redirected to login screen.');
+    }
+
     const $ = cheerio.load(html);
     const announcements: RawPesuAnnouncement[] = [];
     const elements = $('.elem-info-wrapper').toArray();
+
+    if (elements.length === 0) {
+      // Validate whether the page is the actual announcements container or an unexpected view
+      if (!lowerHtml.includes('announcement') && !lowerHtml.includes('studentprofilepesu')) {
+        throw new Error('Unexpected page layout received: Missing announcement container elements.');
+      }
+    }
 
     const maxItems = options.maxAnnouncements || elements.length;
     const targetElements = elements.slice(0, maxItems);
@@ -111,13 +142,13 @@ export class AnnouncementScraper {
           if (ocrText) {
             console.log(`[Scraper] OCR extracted ${ocrText.length} characters.`);
           }
-        } catch (ocrErr) {
-          console.warn(`[Scraper] OCR extraction skipped for ${title}:`, ocrErr);
+        } catch (ocrErr: any) {
+          console.warn(`[Scraper] OCR extraction skipped for ${title}:`, ocrErr.message || ocrErr);
         }
       }
 
-      // Deterministic, stable ID
-      const stableId = this.generateStableId(title, date, rawId);
+      // Deterministic, collision-resistant ID
+      const stableId = this.generateStableId(title, date, bodyText, rawId);
 
       announcements.push({
         id: stableId,

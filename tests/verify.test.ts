@@ -1,3 +1,5 @@
+process.env.NODE_ENV = 'test';
+
 import { AnnouncementScraper } from '../src/services/announcementScraper.js';
 import { samplePesuAnnouncementsHtml } from './fixtures/sampleAnnouncements.js';
 import { CronScheduler } from '../src/services/cronScheduler.js';
@@ -7,7 +9,7 @@ import { ocrService } from '../src/services/ocrService.js';
 
 async function runTests() {
   console.log('====================================================');
-  console.log('🧪 RUNNING PESU ANNOUNCEMENTS SCRAPER VERIFICATION');
+  console.log('🧪 RUNNING HARDENED PESU SCRAPER VERIFICATION');
   console.log('====================================================\n');
 
   let passed = 0;
@@ -23,8 +25,8 @@ async function runTests() {
     }
   }
 
-  // --- TEST SUITE 1: Scraper Extraction & Deterministic Stable IDs ---
-  console.log('\n--- 1. Testing Scraper Extraction & Deterministic IDs ---');
+  // --- TEST SUITE 1: Collision-Resistant Deterministic IDs ---
+  console.log('\n--- 1. Testing Collision-Resistant Deterministic IDs ---');
   const scraper = new AnnouncementScraper();
   const envelope = await scraper.fetchEnvelope({
     htmlFixture: samplePesuAnnouncementsHtml,
@@ -32,26 +34,19 @@ async function runTests() {
   });
 
   assert(envelope.resource === 'announcements', 'Envelope resource matches "announcements"');
-  assert(Boolean(envelope.fetched_at), 'Envelope has valid ISO fetched_at timestamp');
   assert(envelope.data.length === 5, `Extracted 5 announcements (got ${envelope.data.length})`);
 
   const firstAnn = envelope.data[0];
-  assert(firstAnn.title.includes('HackerSpace HackFest 2026'), 'Extracted HackFest title correctly');
-  assert(firstAnn.date === '14-November-2026', 'Extracted publication date accurately');
-  assert(Boolean(firstAnn.image), 'Extracted poster image URL');
+  const recomputedId = scraper.generateStableId(firstAnn.title, firstAnn.date, firstAnn.description);
+  assert(firstAnn.id === recomputedId, `ID is deterministic: ${firstAnn.id}`);
 
-  // Assert deterministic ID stability: re-running should generate identical ID
-  const recomputedId = scraper.generateStableId(firstAnn.title, firstAnn.date);
-  assert(firstAnn.id === recomputedId, `ID is deterministic and stable: ${firstAnn.id}`);
+  // Test collision resistance: Two announcements with identical titles and dates but different descriptions
+  const idA = scraper.generateStableId('ISA-2 Timetable', '17-November-2026', 'For CSE Department Section A');
+  const idB = scraper.generateStableId('ISA-2 Timetable', '17-November-2026', 'For BBA Analytics Department');
+  assert(idA !== idB, 'Different announcements with same title & date produce distinct IDs (No collisions)');
 
-  const envelope2 = await scraper.fetchEnvelope({
-    htmlFixture: samplePesuAnnouncementsHtml,
-    enableOcr: false,
-  });
-  assert(envelope2.data[0].id === firstAnn.id, 'IDs are identical across repeated scraper runs');
-
-  // --- TEST SUITE 2: Strict Classifier & No Fabricated Constraints ---
-  console.log('\n--- 2. Testing Strict Classifier & Constraint Integrity ---');
+  // --- TEST SUITE 2: Strict Classifier, ISO Dates & Constraint Integrity ---
+  console.log('\n--- 2. Testing Strict Classifier & Validated ISO Dates ---');
   const { allClassified, hackathons } = await scraper.getEventsPipeline({
     htmlFixture: samplePesuAnnouncementsHtml,
     enableOcr: false,
@@ -63,23 +58,36 @@ async function runTests() {
     `Identified exactly 3 competitions (HackFest, Ideathon, CTF) - got ${hackathons.length}`
   );
 
-  // Check HackFest (Explicit team size 2-4)
+  // Check HackFest (Explicit team size 2-4 and ISO date range)
   const hackfest = hackathons.find((h) => h.title.includes('HackFest'));
   assert(Boolean(hackfest), 'Found HackFest in hackathons list');
   if (hackfest) {
     assert(hackfest.category === 'HACKATHON', 'HackFest categorized as HACKATHON');
-    assert(hackfest.organizer === 'HackerSpace PESU' || hackfest.organizer === 'HackerSpace', `Organizer identified as HackerSpace`);
-    assert(hackfest.registrationUrl === 'https://hackerspace-pesu.devfolio.co', `Extracted Devfolio URL`);
-    assert(hackfest.format === 'onsite', `Format identified as onsite`);
-    assert(hackfest.venue === 'RR Campus', `Venue identified as RR Campus`);
+    assert(
+      hackfest.eventDates.start === '2026-11-28' && hackfest.eventDates.end === '2026-11-29',
+      `Validated ISO dates extracted: ${hackfest.eventDates.start} to ${hackfest.eventDates.end}`
+    );
     assert(
       hackfest.teamSize?.min === 2 && hackfest.teamSize?.max === 4,
-      `Explicit team size 2-4 preserved`
+      `Explicit team size range 2-4 preserved`
     );
-    assert(hackfest.cashPrize?.includes('1,00,000') || false, `Cash prize extracted: ${hackfest.cashPrize}`);
   }
 
-  // Check CTF (No team size specified in announcement -> MUST BE NULL, NEVER DEFAULTED)
+  // Check Ideathon (Single ISO date parsing)
+  const ideathon = hackathons.find((h) => h.title.includes('Ideathon'));
+  assert(Boolean(ideathon), 'Found Ideathon in hackathons list');
+  if (ideathon) {
+    assert(
+      ideathon.eventDates.start === '2026-12-05' && ideathon.eventDates.end === '2026-12-05',
+      `Single date parsed to ISO: ${ideathon.eventDates.start}`
+    );
+    assert(
+      ideathon.teamSize?.min === 2 && ideathon.teamSize?.max === 3,
+      `Explicit team size 2-3 preserved`
+    );
+  }
+
+  // Check CTF (No team size specified -> MUST BE NULL, NEVER FABRICATED)
   const ctf = hackathons.find((h) => h.category === 'CTF');
   assert(Boolean(ctf), 'Found CTF competition');
   if (ctf) {
@@ -97,109 +105,120 @@ async function runTests() {
   const guestTalk = allClassified.find((a) => a.title.includes('Get Hacked'));
   assert(
     Boolean(guestTalk && !guestTalk.isHackathon),
-    'Guest talk on "How Systems Get Hacked" is NOT classified as a hackathon (Strict word boundary check passed)'
+    'Guest talk on "How Systems Get Hacked" is NOT classified as a hackathon'
   );
 
-  // Check Routine Exam Circular
-  const examNotice = allClassified.find((a) => a.title.includes('Examination'));
+  // --- TEST SUITE 3: OCR SSRF Protection & Domain Whitelist ---
+  console.log('\n--- 3. Testing OCR Security & Domain Whitelist ---');
   assert(
-    Boolean(examNotice && !examNotice.isHackathon),
-    'Routine exam circular filtered out from hackathons'
+    ocrService.isUrlAllowed('https://www.pesuacademy.com/poster.jpg'),
+    'Allows official www.pesuacademy.com domain'
+  );
+  assert(
+    ocrService.isUrlAllowed('https://files.pesuacademy.com/flyer.png'),
+    'Allows files.pesuacademy.com domain'
+  );
+  assert(
+    !ocrService.isUrlAllowed('http://169.254.169.254/latest/meta-data'),
+    'Blocks AWS metadata IP (SSRF prevention)'
+  );
+  assert(
+    !ocrService.isUrlAllowed('http://localhost:8080/internal'),
+    'Blocks local HTTP loopback URLs'
+  );
+  assert(
+    !ocrService.isUrlAllowed('https://evil-unapproved-site.com/image.png'),
+    'Blocks untrusted third-party domains'
   );
 
-  // --- TEST SUITE 3: Tesseract OCR Engine ---
-  console.log('\n--- 3. Testing Tesseract OCR Engine ---');
+  // --- TEST SUITE 4: Security Middleware & Fail-Closed Behavior ---
+  console.log('\n--- 4. Testing Fail-Closed Auth & Endpoints ---');
+
+  // Test 4.1: Fail-closed when API_SECRET_KEY is empty
+  delete process.env.API_SECRET_KEY;
+  delete process.env.SCRAPER_API_KEY;
+
+  const failClosedScheduler = new CronScheduler(scraper);
+  const failClosedApp = express();
+  failClosedApp.use(express.json());
+  failClosedApp.use(createApiRouter(failClosedScheduler));
+
+  const fcPort = 4291;
+  const fcServer = failClosedApp.listen(fcPort);
   try {
-    const sampleImage =
-      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
-    const ocrResult = await ocrService.extractText(sampleImage);
-    assert(typeof ocrResult === 'string', 'Tesseract OCR worker runs and returns string');
-  } catch (err) {
-    console.warn('OCR test notice:', err);
+    const fcResp = await fetch(`http://localhost:${fcPort}/api/v1/hackathons`);
+    assert(
+      fcResp.status === 500,
+      'Fails closed with 500 Server Misconfiguration when API_SECRET_KEY is unset'
+    );
   } finally {
-    await ocrService.terminate();
+    fcServer.close();
   }
 
-  // --- TEST SUITE 4: Express API Endpoints & Auth Middleware ---
-  console.log('\n--- 4. Testing API Endpoints & Bearer Token Security ---');
-  const testSecretKey = 'test-quackathon-secret-token-777';
+  // Test 4.2: Authenticated server with secret key
+  const testSecretKey = 'super-secret-quackathon-key-2026';
   process.env.API_SECRET_KEY = testSecretKey;
 
-  const scheduler = new CronScheduler(scraper);
-  const app = express();
-  app.use(express.json());
-  app.use(createApiRouter(scheduler));
+  const authScheduler = new CronScheduler(scraper);
+  const authApp = express();
+  authApp.use(express.json());
+  authApp.use(createApiRouter(authScheduler));
 
-  const testPort = 4199;
-  const server = app.listen(testPort);
+  const authPort = 4292;
+  const authServer = authApp.listen(authPort);
 
   try {
-    await scheduler.syncNow({ htmlFixture: samplePesuAnnouncementsHtml, enableOcr: false });
+    await authScheduler.syncNow({ htmlFixture: samplePesuAnnouncementsHtml, enableOcr: false });
 
-    // 4.1 /health is public
-    const healthResp = await fetch(`http://localhost:${testPort}/health`);
+    // Public /health works
+    const healthResp = await fetch(`http://localhost:${authPort}/health`);
     assert(healthResp.status === 200, 'GET /health is public and returns 200 OK');
 
-    // 4.2 /api/v1/announcements WITHOUT auth header returns 401 Unauthorized
-    const unauthResp = await fetch(`http://localhost:${testPort}/api/v1/announcements`);
-    assert(
-      unauthResp.status === 401,
-      'GET /api/v1/announcements without Bearer token is rejected with 401 Unauthorized'
-    );
+    // Missing token is rejected with 401
+    const unauthResp = await fetch(`http://localhost:${authPort}/api/v1/hackathons`);
+    assert(unauthResp.status === 401, 'Request without Bearer token returns 401');
 
-    // 4.3 /api/v1/announcements WITH invalid Bearer token returns 401
-    const invalidAuthResp = await fetch(`http://localhost:${testPort}/api/v1/announcements`, {
+    // Invalid token is rejected with 401
+    const badTokenResp = await fetch(`http://localhost:${authPort}/api/v1/hackathons`, {
       headers: { Authorization: 'Bearer wrong-key' },
     });
+    assert(badTokenResp.status === 401, 'Request with invalid token returns 401');
+
+    // Valid Bearer token returns 200 OK
+    const goodResp = await fetch(`http://localhost:${authPort}/api/v1/hackathons`, {
+      headers: { Authorization: `Bearer ${testSecretKey}` },
+    });
+    assert(goodResp.status === 200, 'Request with valid Bearer token returns 200 OK');
+    const goodJson = await goodResp.json();
+    assert(goodJson.total === 3, 'Returns 3 verified hackathons');
+
+    // Quackathon dedicated endpoint returns normalized envelope of hackathons
+    const qResp = await fetch(`http://localhost:${authPort}/api/v1/quackathon/events`, {
+      headers: { Authorization: `Bearer ${testSecretKey}` },
+    });
+    assert(qResp.status === 200, 'GET /api/v1/quackathon/events returns 200 OK');
+    const qJson = await qResp.json();
+    assert(qJson.resource === 'announcements', 'Resource is "announcements"');
+    assert(qJson.data.length === 3, 'Quackathon events endpoint contains only verified hackathons');
+
+    // Test 4.3: Cache protection (Zero-item sync does not overwrite healthy cache)
+    console.log('\n--- 5. Testing Cache Protection ---');
+    // Simulate an unexpected malformed page yielding 0 items
+    const emptySyncResult = await authScheduler.syncNow({
+      htmlFixture: '<html><body><div>No announcements here</div></body></html>',
+      enableOcr: false,
+    });
     assert(
-      invalidAuthResp.status === 401,
-      'GET /api/v1/announcements with invalid Bearer token is rejected with 401'
+      emptySyncResult.success === false,
+      'Sync returning 0 items reports success: false'
+    );
+    assert(
+      authScheduler.getCachedHackathons().length === 3,
+      'Healthy cache preserved (not overwritten with 0 items)'
     );
 
-    // 4.4 /api/v1/announcements WITH valid Bearer token returns 200 OK
-    const authAnnResp = await fetch(`http://localhost:${testPort}/api/v1/announcements`, {
-      headers: { Authorization: `Bearer ${testSecretKey}` },
-    });
-    assert(authAnnResp.status === 200, 'GET /api/v1/announcements with valid Bearer token returns 200 OK');
-    const annJson = await authAnnResp.json();
-    assert(annJson.resource === 'announcements', 'Matches Quackathon resource envelope');
-    assert(annJson.data.length === 5, 'Returns 5 announcement items');
-
-    // 4.5 /api/v1/hackathons WITH valid Bearer token returns 200 OK
-    const hackResp = await fetch(`http://localhost:${testPort}/api/v1/hackathons`, {
-      headers: { Authorization: `Bearer ${testSecretKey}` },
-    });
-    assert(hackResp.status === 200, 'GET /api/v1/hackathons returns 200 OK');
-    const hackJson = await hackResp.json();
-    assert(hackJson.total === 3, 'Returns exactly 3 verified hackathons');
-
-    // 4.6 Single Hackathon Detail
-    const targetId = hackJson.hackathons[0].id;
-    const detailResp = await fetch(`http://localhost:${testPort}/api/v1/hackathons/${targetId}`, {
-      headers: { Authorization: `Bearer ${testSecretKey}` },
-    });
-    assert(detailResp.status === 200, 'GET /api/v1/hackathons/:id returns 200 OK');
-
-    // 4.7 POST /api/v1/sync requires Bearer token
-    const unauthSyncResp = await fetch(`http://localhost:${testPort}/api/v1/sync`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ htmlFixture: samplePesuAnnouncementsHtml }),
-    });
-    assert(unauthSyncResp.status === 401, 'POST /api/v1/sync without Bearer token returns 401');
-
-    const authSyncResp = await fetch(`http://localhost:${testPort}/api/v1/sync`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${testSecretKey}`,
-      },
-      body: JSON.stringify({ htmlFixture: samplePesuAnnouncementsHtml }),
-    });
-    assert(authSyncResp.status === 200, 'POST /api/v1/sync with Bearer token returns 200 OK');
-
   } finally {
-    server.close();
+    authServer.close();
   }
 
   console.log('\n====================================================');

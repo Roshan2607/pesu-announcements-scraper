@@ -31,6 +31,81 @@ const CLUBS = [
   'Department of AI & ML',
 ];
 
+const MONTH_MAP: Record<string, string> = {
+  jan: '01', january: '01',
+  feb: '02', february: '02',
+  mar: '03', march: '03',
+  apr: '04', april: '04',
+  may: '05',
+  jun: '06', june: '06',
+  jul: '07', july: '07',
+  aug: '08', august: '08',
+  sep: '09', sept: '09', september: '09',
+  oct: '10', october: '10',
+  nov: '11', november: '11',
+  dec: '12', december: '12',
+};
+
+/**
+ * Parses free-form date expressions into validated ISO 8601 (YYYY-MM-DD) date strings.
+ * E.g.:
+ * "28th - 29th November 2026" -> { start: "2026-11-28", end: "2026-11-29" }
+ * "5th December 2026"         -> { start: "2026-12-05", end: "2026-12-05" }
+ * "14-November-2026"          -> { start: "2026-11-14", end: "2026-11-14" }
+ */
+export function parseIsoDateRange(text: string, referenceYear = new Date().getFullYear()): {
+  start: string | null;
+  end: string | null;
+} {
+  if (!text) return { start: null, end: null };
+
+  // 1. Check for standard ISO format YYYY-MM-DD
+  const isoMatch = text.match(/\b(202\d)-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])\b/);
+  if (isoMatch) {
+    return { start: isoMatch[0], end: null };
+  }
+
+  // 2. Check for date range: "28th - 29th November 2026" or "28 to 29 November 2026"
+  const rangeMatch = text.match(
+    /\b([0-9]{1,2})(?:st|nd|rd|th)?\s*(?:-|to)\s*([0-9]{1,2})(?:st|nd|rd|th)?\s+([a-zA-Z]+)(?:\s+(202\d))?\b/i
+  );
+  if (rangeMatch) {
+    const startDay = rangeMatch[1].padStart(2, '0');
+    const endDay = rangeMatch[2].padStart(2, '0');
+    const monthStr = rangeMatch[3].toLowerCase();
+    const month = MONTH_MAP[monthStr];
+    const year = rangeMatch[4] || String(referenceYear);
+
+    if (month) {
+      return {
+        start: `${year}-${month}-${startDay}`,
+        end: `${year}-${month}-${endDay}`,
+      };
+    }
+  }
+
+  // 3. Check for single date: "5th December 2026" or "14-November-2026"
+  const singleMatch = text.match(
+    /\b([0-9]{1,2})(?:st|nd|rd|th)?[\s-]+([a-zA-Z]+)(?:[\s-]+(202\d))?\b/i
+  );
+  if (singleMatch) {
+    const day = singleMatch[1].padStart(2, '0');
+    const monthStr = singleMatch[2].toLowerCase();
+    const month = MONTH_MAP[monthStr];
+    const year = singleMatch[3] || String(referenceYear);
+
+    if (month) {
+      const isoDate = `${year}-${month}-${day}`;
+      return {
+        start: isoDate,
+        end: isoDate,
+      };
+    }
+  }
+
+  return { start: null, end: null };
+}
+
 export function classifyAnnouncement(ann: RawPesuAnnouncement): ClassifiedHackathon {
   const combinedText = `${ann.title}\n${ann.description}\n${ann.ocrText || ''}`;
 
@@ -39,36 +114,36 @@ export function classifyAnnouncement(ann: RawPesuAnnouncement): ClassifiedHackat
 
   // 2. Strict Category Detection with Word Boundaries
   let category: EventCategory = 'GENERAL_ANNOUNCEMENT';
-  let isHackathon = false;
+  let isPotentialHackathon = false;
   let classificationReason = 'Routine or general announcement';
 
   if (!isRoutineAdministrative) {
     if (IDEATHON_REGEX.test(combinedText)) {
       category = 'IDEATHON';
-      isHackathon = true;
+      isPotentialHackathon = true;
       classificationReason = 'Matched explicit ideathon keyword pattern';
     } else if (HACKATHON_REGEX.test(combinedText)) {
       category = 'HACKATHON';
-      isHackathon = true;
+      isPotentialHackathon = true;
       classificationReason = 'Matched explicit hackathon keyword pattern';
     } else if (CTF_REGEX.test(combinedText)) {
       category = 'CTF';
-      isHackathon = true; // CTFs are matchable technical team competitions
+      isPotentialHackathon = true;
       classificationReason = 'Matched capture-the-flag (CTF) competition pattern';
     } else if (CODING_CONTEST_REGEX.test(combinedText)) {
       category = 'CODING_COMPETITION';
-      isHackathon = false;
-      classificationReason = 'Matched competitive coding competition';
+      isPotentialHackathon = false;
+      classificationReason = 'Competitive coding contest';
     } else if (WORKSHOP_REGEX.test(combinedText)) {
       category = 'WORKSHOP';
-      isHackathon = false;
+      isPotentialHackathon = false;
       classificationReason = 'Educational workshop or hands-on training';
     }
   } else {
     classificationReason = 'Excluded as administrative, academic circular, or routine notice';
   }
 
-  // 3. Organizer Detection (Only if clearly present)
+  // 3. Organizer Detection
   let organizer: string | null = null;
   for (const club of CLUBS) {
     if (new RegExp(`\\b${club}\\b`, 'i').test(`${ann.title} ${ann.description}`)) {
@@ -94,31 +169,53 @@ export function classifyAnnouncement(ann: RawPesuAnnouncement): ClassifiedHackat
     cashPrize = prizeMatch[0].trim();
   }
 
-  // 6. Explicit Team Size ONLY - NEVER INVENT OR DEFAULT CONSTRAINTS
+  // 6. Explicit Team Size ONLY - NEVER ASSUME OR INVENT CONSTRAINTS
   let teamSize: { min: number; max: number } | null = null;
+  const isExplicitSolo = /\b(individual\s+participation|solo\s+participants?|single\s+player)\b/i.test(
+    combinedText
+  );
+
   const teamRangeMatch = `${ann.description} ${ann.ocrText || ''}`.match(
     /\b(?:teams?\s+of|team\s+size[:\s]*)\s*([1-9])\s*(?:-|to)\s*([1-9])\b/i
   );
-  const teamSingleMatch = `${ann.description} ${ann.ocrText || ''}`.match(
-    /\b(?:teams?\s+of|team\s+size[:\s]*)\s*([1-9])(?:\s+members?)?\b/i
+  const teamUpToMatch = `${ann.description} ${ann.ocrText || ''}`.match(
+    /\b(?:teams?\s+of\s+up\s+to|maximum\s+team\s+size\s*(?:of|is)?)\s*([1-9])\b/i
   );
-  const soloMatch = /\b(individual|solo\s+participants?)\b/i.test(combinedText);
+  const teamExactMatch = `${ann.description} ${ann.ocrText || ''}`.match(
+    /\b(?:teams?\s+of|team\s+size\s*[:=]\s*)\s*([1-9])(?:\s+members?)?\b/i
+  );
 
   if (teamRangeMatch) {
     teamSize = {
       min: parseInt(teamRangeMatch[1], 10),
       max: parseInt(teamRangeMatch[2], 10),
     };
-  } else if (soloMatch && !teamSingleMatch) {
+  } else if (teamUpToMatch) {
+    teamSize = {
+      min: 1,
+      max: parseInt(teamUpToMatch[1], 10),
+    };
+  } else if (teamExactMatch) {
+    const size = parseInt(teamExactMatch[1], 10);
+    // If "team of 4" is stated, exact size is 4. Do NOT assume min: 1 unless stated!
+    teamSize = {
+      min: size,
+      max: size,
+    };
+  } else if (isExplicitSolo) {
     teamSize = { min: 1, max: 1 };
-  } else if (teamSingleMatch) {
-    const size = parseInt(teamSingleMatch[1], 10);
-    teamSize = { min: 1, max: size };
   }
-  // Note: If no team size is explicitly found, teamSize remains null.
-  // We NEVER assume 2-4 members unless stated!
+  // If no team size is mentioned, teamSize remains null!
 
-  // 7. Format & Venue Extraction (Explicit text only)
+  // 7. Team Verification for Matchability
+  // If an event is explicitly solo, it is not a team hackathon matchable in Quackathon
+  let isHackathon = isPotentialHackathon;
+  if (isExplicitSolo && isPotentialHackathon) {
+    isHackathon = false;
+    classificationReason = 'Solo-only contest; excluded from team hackathon matching';
+  }
+
+  // 8. Format & Venue Extraction (Explicit text only)
   let format: 'onsite' | 'online' | 'hybrid' | 'unknown' = 'unknown';
   if (/\bhybrid\b/i.test(combinedText)) format = 'hybrid';
   else if (/\b(online|virtual|zoom|discord|google\s+meet)\b/i.test(combinedText)) format = 'online';
@@ -136,13 +233,18 @@ export function classifyAnnouncement(ann: RawPesuAnnouncement): ClassifiedHackat
     venue = 'EC Campus';
   }
 
-  // 8. Event Dates (Explicit text only)
-  const dateRangeRegex =
-    /\b(?:dates?|held\s+on|on)[:\s]*([0-9]{1,2}(?:st|nd|rd|th)?\s*(?:-|to)?\s*[0-9]{1,2}?(?:st|nd|rd|th)?\s+[a-zA-Z]+(?:\s+[0-9]{4})?)/i;
-  const dateMatch = `${ann.description} ${ann.ocrText || ''}`.match(dateRangeRegex);
-  const eventStart = dateMatch ? dateMatch[1].trim() : null;
+  // 9. Validated ISO Date Parsing (Asia/Kolkata)
+  // NEVER fall back to publication date for eventDates (Quackathon Core Guarantee)
+  const dateTextMatch = `${ann.description} ${ann.ocrText || ''}`.match(
+    /\b(?:dates?|held\s+on|event\s+dates?|on)[:\s]*([0-9]{1,2}(?:st|nd|rd|th)?(?:\s*(?:to|-)\s*[0-9]{1,2}(?:st|nd|rd|th)?)?\s+[a-zA-Z]+(?:\s+[0-9]{4})?)/i
+  );
+  const parsedEventDates = dateTextMatch
+    ? parseIsoDateRange(dateTextMatch[1].trim())
+    : { start: null, end: null };
 
-  // 9. Tags
+  const parsedPublishedDate = parseIsoDateRange(ann.date || '').start || null;
+
+  // 10. Tags
   const tags: string[] = [];
   if (isHackathon) tags.push('hackathon');
   if (/\b(ai|ml|machine\s+learning|deep\s+learning)\b/i.test(combinedText)) tags.push('ai-ml');
@@ -157,10 +259,10 @@ export function classifyAnnouncement(ann: RawPesuAnnouncement): ClassifiedHackat
     category,
     isHackathon,
     organizer,
-    publishedDate: ann.date || null,
+    publishedDate: parsedPublishedDate,
     eventDates: {
-      start: eventStart,
-      end: null,
+      start: parsedEventDates.start,
+      end: parsedEventDates.end,
     },
     registrationDeadline: null,
     registrationUrl,

@@ -66,6 +66,21 @@ export class CronScheduler {
       console.log(`[CronScheduler] Starting sync at ${new Date().toISOString()}...`);
       const { envelope, hackathons } = await this.scraper.getEventsPipeline(options);
 
+      // Cache Protection: Do not overwrite healthy cache if a run unexpectedly yields 0 items
+      if (envelope.data.length === 0 && this.cachedEnvelope && this.cachedEnvelope.data.length > 0) {
+        console.warn(
+          '[CronScheduler] Warning: Sync yielded 0 announcements while prior cache has data. Preserving previous good cache.'
+        );
+        this.isSyncing = false;
+        this.lastError = 'Sync returned 0 items; previous healthy cache was preserved.';
+        return {
+          success: false,
+          announcementsCount: this.cachedEnvelope.data.length,
+          hackathonsCount: this.cachedHackathons.length,
+          error: this.lastError,
+        };
+      }
+
       this.cachedEnvelope = envelope;
       this.cachedHackathons = hackathons;
       this.lastSyncAt = new Date().toISOString();
@@ -84,10 +99,11 @@ export class CronScheduler {
       this.isSyncing = false;
       this.lastError = err.message || String(err);
       console.error('[CronScheduler] Sync error:', err);
+
       return {
         success: false,
-        announcementsCount: 0,
-        hackathonsCount: 0,
+        announcementsCount: this.cachedEnvelope?.data.length || 0,
+        hackathonsCount: this.cachedHackathons.length,
         error: this.lastError,
       };
     }

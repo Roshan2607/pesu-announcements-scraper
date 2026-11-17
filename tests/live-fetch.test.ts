@@ -16,18 +16,16 @@ async function runLiveVerification() {
     process.exit(0);
   }
 
-  console.log(`[1/3] Authenticating with live PESU Academy portal as ${srn.slice(0, 4)}...`);
+  console.log('[1/3] Authenticating with live PESU Academy portal...');
   const session = new PesuAuthSession(srn, pwd);
   const authResult = await session.login();
 
   if (!authResult.success) {
-    console.error(`❌ Authentication failed: ${authResult.error}`);
+    console.error('❌ Authentication failed against PESU Academy.');
     process.exit(1);
   }
 
-  console.log('  ✅ Successfully authenticated!');
-  console.log(`  🔑 Session CSRF Token: ${authResult.csrfToken}`);
-  console.log(`  🍪 Cookies captured: ${session.getCookieHeader().slice(0, 60)}...\n`);
+  console.log('  ✅ Successfully authenticated (session established).\n');
 
   console.log('[2/3] Fetching live announcement payload from studentProfilePESUAdmin...');
   const scraper = new AnnouncementScraper(session);
@@ -54,14 +52,14 @@ async function runLiveVerification() {
   console.log(`  🔹 Published Date: ${firstAnn.date}`);
 
   // Test ID stability (hash must be 100% deterministic)
-  const recomputedId = scraper.generateStableId(firstAnn.title, firstAnn.date);
+  const recomputedId = scraper.generateStableId(firstAnn.title, firstAnn.date, firstAnn.description);
   if (recomputedId !== firstAnn.id) {
     console.error(`❌ Error: Announcement ID is non-deterministic (${firstAnn.id} != ${recomputedId})`);
     process.exit(1);
   }
   console.log('  ✅ ID determinism verified: Stable across multiple calculations.\n');
 
-  console.log('--- RECENT LIVE PESU ANNOUNCEMENTS ---');
+  console.log('--- RECENT LIVE PESU ANNOUNCEMENTS (METADATA ONLY) ---');
   envelope.data.slice(0, 5).forEach((ann, idx) => {
     console.log(`  [${idx + 1}] ID: ${ann.id} | Date: ${ann.date}`);
     console.log(`      Title: ${ann.title}`);
@@ -74,6 +72,6 @@ async function runLiveVerification() {
 }
 
 runLiveVerification().catch((err) => {
-  console.error('Fatal live test error:', err);
+  console.error('Fatal live test error:', err.message || 'Unknown error');
   process.exit(1);
 });

@@ -89,7 +89,7 @@ export class PesuAuthSession {
     };
 
     try {
-      console.log(`[PesuAuthSession] Initiating authentication for ${user.slice(0, 4)}...`);
+      console.log('[PesuAuthSession] Initiating portal authentication...');
 
       // Step 1: GET initial landing page to grab initial cookies & login CSRF token
       const r0 = await fetch(`${this.academyBaseUrl}/`, {
@@ -178,7 +178,7 @@ export class PesuAuthSession {
 
       this.authenticatedCsrfToken = authCsrf;
       this.authenticatedAt = Date.now();
-      console.log(`[PesuAuthSession] Authentication successful for ${user}!`);
+      console.log('[PesuAuthSession] Authentication successful.');
       return {
         success: true,
         username: user,
