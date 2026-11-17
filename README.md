@@ -1,6 +1,5 @@
+# PAASHA 🦆
 ### **P**ESU **A**cademy **A**nnouncements **S**craper & **H**ackathon **A**PI
-
-**PAASHA** is a hardened, automated event scraper, flyer OCR processor, and hackathon ingestion service built specifically for **[Quackathon](https://github.com/Roshan2607/Quackathon)**.
 
 ---
 
@@ -110,119 +109,29 @@ npm run dev
 All endpoints under `/api/v1/*` require `Authorization: Bearer <API_SECRET_KEY>`.
 
 ### 1. `GET /api/v1/connection-status`
-Performs an active health handshake against the live PESU Academy portal to verify session status, network connectivity, and latency:
-```bash
-curl -H "Authorization: Bearer <API_SECRET_KEY>" http://localhost:4000/api/v1/connection-status
-```
-```json
-{
-  "ok": true,
-  "portalLive": true,
-  "sessionActive": true,
-  "latencyMs": 112,
-  "checkedAt": "2026-11-17T16:07:07.157Z",
-  "syncStatus": {
-    "isSyncing": false,
-    "lastSync": "2026-11-17T16:07:07.157Z",
-    "cachedAnnouncements": 15,
-    "cachedHackathons": 0,
-    "lastError": null
-  }
-}
-```
+Performs an active health handshake against the live PESU Academy portal to verify session status, network connectivity, latency, and background sync state.
 
 ### 2. `GET /api/v1/hackathons`
-Returns filtered and verified hackathons, ideathons, and technical competitions:
-- Query parameters:
-  - `matchable_only=true`: Filters only events eligible for student team matching
-  - `include_unverified=true`: Includes internal notices pending public proof verification
-  - `category=HACKATHON`: Filter by category (`HACKATHON`, `IDEATHON`, `CTF`, `CODING_COMPETITION`)
-  - `format=onsite`: Filter by format (`onsite`, `online`, `hybrid`)
+Returns filtered and verified hackathons, ideathons, and technical competitions.
+- **Query Parameters**:
+  - `matchable_only=true`: Filters only events eligible for student team matching.
+  - `include_unverified=true`: Includes internal notices pending public proof verification.
+  - `category`: Filter by category (`HACKATHON`, `IDEATHON`, `CTF`, `CODING_COMPETITION`, `WORKSHOP`).
+  - `format`: Filter by format (`onsite`, `online`, `hybrid`).
 
-```bash
-curl -H "Authorization: Bearer <API_SECRET_KEY>" http://localhost:4000/api/v1/hackathons?matchable_only=true
-```
-```json
-{
-  "ok": true,
-  "total": 1,
-  "synced_at": "2026-11-17T16:00:00.000Z",
-  "hackathons": [
-    {
-      "id": "pesu_ann_8ab156bebf8be199",
-      "title": "HackerSpace HackFest 2026: 24-Hour National Hackathon",
-      "category": "HACKATHON",
-      "isHackathon": true,
-      "isMatchable": true,
-      "organizer": "HackerSpace PESU",
-      "publishedDate": "2026-11-14",
-      "eventDates": {
-        "start": "2026-11-28",
-        "end": "2026-11-29"
-      },
-      "registrationUrl": "https://hackerspace-pesu.devfolio.co",
-      "cashPrize": "Cash Prize Pool: ₹1,00,000",
-      "teamSize": {
-        "min": 2,
-        "max": 4
-      },
-      "format": "onsite",
-      "venue": "RR Campus",
-      "posterUrl": "https://www.pesuacademy.com/MAcademy/img/announcements/hackfest.jpg",
-      "ocrExtracted": true,
-      "ocrSnippet": "PRIZE POOL 100K REG DEVFOLIO...",
-      "tags": ["hackathon", "ai-ml", "web3", "onsite", "prizes"],
-      "confidence": "high",
-      "classificationReason": "Matched explicit hackathon keyword pattern",
-      "eligibility": {
-        "campus": "RR",
-        "departments": ["CSE"],
-        "targetYears": [],
-        "isOpenToAll": true,
-        "status": "REGISTRATION_OPEN",
-        "registrationDeadline": null
-      },
-      "verification": {
-        "isIndependentlyVerified": true,
-        "verificationSource": "PUBLIC_PLATFORM",
-        "publicProofUrl": "https://hackerspace-pesu.devfolio.co",
-        "requiresAdminReview": false
-      }
-    }
-  ]
-}
-```
+### 3. `GET /api/v1/hackathons/:id`
+Retrieves full details for a single hackathon by ID. Gated by independent verification by default; unverified items return 404 unless `include_unverified=true` is provided.
 
-### 3. `GET /api/v1/quackathon/events`
-Returns verified hackathons formatted in the normalized Quackathon envelope:
-```bash
-curl -H "Authorization: Bearer <API_SECRET_KEY>" http://localhost:4000/api/v1/quackathon/events
-```
-```json
-{
-  "resource": "announcements",
-  "fetched_at": "2026-11-17T16:00:00.000Z",
-  "data": [
-    {
-      "id": "pesu_ann_8ab156bebf8be199",
-      "title": "HackerSpace HackFest 2026: 24-Hour National Hackathon",
-      "date": "2026-11-14",
-      "description": "The Department of CSE in collaboration with HackerSpace...",
-      "image": "https://www.pesuacademy.com/MAcademy/img/announcements/hackfest.jpg",
-      "attachments": 0,
-      "ocrText": "PRIZE POOL 100K REG DEVFOLIO"
-    }
-  ]
-}
-```
+### 4. `GET /api/v1/quackathon/events`
+Returns verified hackathons formatted in the normalized Quackathon envelope (`resource: "announcements"`).
 
-### 4. `POST /api/v1/sync`
-Manually triggers an immediate scrape and OCR extraction:
-```bash
-curl -X POST -H "Authorization: Bearer <API_SECRET_KEY>" http://localhost:4000/api/v1/sync
-```
+### 5. `POST /api/v1/sync`
+Manually triggers an immediate scrape, flyer OCR extraction, and independent public source verification.
 
-### 5. `GET /health`
+### 6. `GET /api/v1/announcements`
+Restricted endpoint returning raw announcement objects. Enabled only when `EXPOSE_RAW_ANNOUNCEMENTS=true` is set in environment configuration.
+
+### 7. `GET /health`
 Public health diagnostic endpoint (no token required).
 
 ---
