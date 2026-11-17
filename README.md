@@ -1,4 +1,3 @@
-# PAASHA 🦆
 ### **P**ESU **A**cademy **A**nnouncements **S**craper & **H**ackathon **A**PI
 
 **PAASHA** is a hardened, automated event scraper, flyer OCR processor, and hackathon ingestion service built specifically for **[Quackathon](https://github.com/Roshan2607/Quackathon)**.
